@@ -1,0 +1,11 @@
+services:
+  coinor_solvers:
+    container_name: coinor_solvers
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: coinor-suite:latest
+    volumes:
+      - ./problems:/app/problems:ro
+      - ./solutions:/app/solutions:rw
+    command: /bin/bash -c "echo 'COIN-OR Solvers Ready' && tail -f /dev/null"
