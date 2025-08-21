@@ -130,9 +130,9 @@ Please refer to each solver's documentation for detailed license information.
 
 - [COIN-OR Official Website](https://www.coin-or.org/)
 - [CLP Documentation](https://github.com/coin-or/Clp)
-- [Ipopt Documentation](https://coin-or.github.io/Ipopt/)
+- [Ipopt Documentation](https://github.com/coin-or/Ipopt)
 - [CBC Documentation](https://github.com/coin-or/Cbc)
-- [Bonmin Documentation](https://www.coin-or.org/Bonmin/)
-- [Couenne Documentation](https://www.coin-or.org/Couenne/)
+- [Bonmin Documentation](https://github.com/coin-or/Bonmin)
+- [Couenne Documentation](https://github.com/coin-or/Couenne)
 
 **Note**: This image is designed for research purposes.
