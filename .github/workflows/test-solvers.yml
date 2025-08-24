@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+  schedule:
+    # Every Sunday at midnight UTC:
+    - cron: '0 0 * * 0'
 
 # Cancel any in-progress runs when a new run starts
 concurrency:
