@@ -1,14 +1,14 @@
 # COIN-OR Optimization Solvers Suite
 # This Dockerfile builds a complete suite of COIN-OR optimization solvers from source
 # Includes: CLP, Ipopt, CBC, Bonmin, and Couenne
-# Built on Ubuntu 18.04 LTS with Python 3.8
+# Built on Ubuntu 18.04 LTS with multi-stage optimization for minimal final image size
 
 # ============================================================================
 # BASE STAGE: Set up Ubuntu 18.04 with all build dependencies
 # ============================================================================
 FROM ubuntu:18.04 AS base
 
-WORKDIR /app
+WORKDIR /tmp
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -26,19 +26,7 @@ ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
     LC_NUMERIC=en_US.UTF-8
 
-# Install Python 3.8 from deadsnakes PPA (Ubuntu 18.04 ships with Python 3.6)
-RUN add-apt-repository ppa:deadsnakes/ppa -y \
-    && apt-get update \
-    && apt-get install -y \
-        python3.8 \
-        python3.8-dev \
-        python3.8-distutils \
-        python3-pip \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1 \
-    && update-alternatives --set python3 /usr/bin/python3.8 \
-    && python3 -m pip install --upgrade pip
-
-# Install build dependencies required for compiling the solvers
+# Install the build dependencies required for compiling the solvers
 # Including: compilers, linear algebra libraries, and solver-specific dependencies
 RUN apt-get install -y \
     build-essential \
@@ -75,7 +63,6 @@ COPY dist/MUMPS_4.10.0.tar.gz /tmp/MUMPS_4.10.0.tar.gz
 # Display build environment information
 RUN echo "=== System Information ===" \
     && cat /etc/lsb-release \
-    && python3 --version \
     && gcc --version | head -1 \
     && g++ --version | head -1 \
     && gfortran --version | head -1
@@ -245,64 +232,97 @@ RUN cd /tmp/Couenne \
     && make -j1 \
     && make install
 
-# Final verification of all installed solvers
-RUN echo "=== Final Solver Suite Verification ===" \
-    && for solver in clp ipopt cbc bonmin couenne; do \
-         echo -n "  $solver: "; \
-         if [ -f /opt/coin-or/bin/$solver ]; then \
-            echo "✓ installed"; \
-         else \
-            echo "✗ missing"; \
-         fi; \
-       done
+# ============================================================================
+# PYTHON BUILDER STAGE: Build Python 3.8 virtual environment
+# ============================================================================
+FROM ubuntu:18.04 AS python-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Python 3.8 from deadsnakes PPA
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        software-properties-common \
+        gnupg2 \
+        ca-certificates \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3.8 \
+        python3.8-dev \
+        python3.8-venv \
+        python3.8-distutils \
+        gcc \
+        g++ \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /usr/share/doc/* \
+    && rm -rf /usr/share/man/*
+
+# Create and activate virtual environment
+RUN python3.8 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip and install core packages, Pyomo
+RUN pip install --no-cache-dir --upgrade pip wheel setuptools pyomo
+
+# Clean up pip cache
+RUN pip cache purge 2>/dev/null || true && rm -rf /tmp/*
 
 # ============================================================================
-# CONFIGURATION
+# FINAL STAGE: Create minimal runtime image with Python 3.8 and solvers
 # ============================================================================
+FROM ubuntu:18.04 AS runtime
 
-# Set up environment variables for runtime
-ENV PATH="/opt/coin-or/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/coin-or/lib:${LD_LIBRARY_PATH}"
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Python 3.8 and runtime dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        software-properties-common \
+        ca-certificates \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3.8 \
+        python3.8-distutils \
+        libgfortran4 \
+        libgomp1 \
+        libquadmath0 \
+        libblas3 \
+        liblapack3 \
+        libstdc++6 \
+        libmetis5 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && rm -rf /usr/share/doc/* \
+    && rm -rf /usr/share/man/*
+
+# Copy the compiled solver binaries from the build stage
+COPY --from=stage5-couenne /opt/coin-or/bin/ /opt/coin-or/bin/
+# Copy the compiled shared libraries
+COPY --from=stage5-couenne /opt/coin-or/lib/*.so* /opt/coin-or/lib/
+# Configure the system to find our libraries
+RUN echo "/opt/coin-or/lib" > /etc/ld.so.conf.d/coin-or.conf && ldconfig
+
+# Copy Python virtual environment
+COPY --from=python-builder /opt/venv /opt/venv
+
+# Set up environment variables
+ENV PATH="/opt/venv/bin:/opt/coin-or/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    COIN_OR_HOME="/opt/coin-or" \
+    PYOMO_CONFIG_PATH="/opt/coin-or/bin" \
+    LD_LIBRARY_PATH="/opt/coin-or/lib:${LD_LIBRARY_PATH}" \
+    VIRTUAL_ENV="/opt/venv"
+
+# Create non-root user
+RUN useradd -m -u 1000 -s /bin/bash coinor && \
+    mkdir -p /app && \
+    chown -R coinor:coinor /app
 
 WORKDIR /app
+USER coinor
 
-# ============================================================================
-# REPORT
-# ============================================================================
-# This final step creates a comprehensive version report of all installed solvers
-
-RUN echo "============================================" > /opt/coin-or/solver_versions.txt \
-    && echo "COIN-OR SOLVER SUITE VERSION REPORT" >> /opt/coin-or/solver_versions.txt \
-    && echo "Build Date: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> /opt/coin-or/solver_versions.txt \
-    && echo "============================================" >> /opt/coin-or/solver_versions.txt \
-    && echo "" >> /opt/coin-or/solver_versions.txt \
-    && echo "INSTALLED SOLVERS:" >> /opt/coin-or/solver_versions.txt \
-    && echo "------------------" >> /opt/coin-or/solver_versions.txt \
-    && echo "" >> /opt/coin-or/solver_versions.txt \
-    && echo "1. CLP (Linear Programming):" >> /opt/coin-or/solver_versions.txt \
-    && echo -n "   Version: " >> /opt/coin-or/solver_versions.txt \
-    && (clp -version 2>&1 | head -1 | sed 's/^/   /' >> /opt/coin-or/solver_versions.txt || echo "1.16.9" >> /opt/coin-or/solver_versions.txt) \
-    && echo "" >> /opt/coin-or/solver_versions.txt \
-    && echo "2. Ipopt (Nonlinear Optimization):" >> /opt/coin-or/solver_versions.txt \
-    && echo -n "   Version: " >> /opt/coin-or/solver_versions.txt \
-    && (ipopt -v 2>&1 | grep -oE "Ipopt [0-9]+\.[0-9]+\.[0-9]+" | head -1 >> /opt/coin-or/solver_versions.txt || echo "3.12.4" >> /opt/coin-or/solver_versions.txt) \
-    && echo "" >> /opt/coin-or/solver_versions.txt \
-    && echo "3. CBC (Mixed Integer Linear Programming):" >> /opt/coin-or/solver_versions.txt \
-    && echo -n "   Version: " >> /opt/coin-or/solver_versions.txt \
-    && (cbc -version 2>&1 | head -1 | sed 's/^/   /' >> /opt/coin-or/solver_versions.txt || echo "2.9.7" >> /opt/coin-or/solver_versions.txt) \
-    && echo "" >> /opt/coin-or/solver_versions.txt \
-    && echo "4. Bonmin (Mixed Integer Nonlinear Programming):" >> /opt/coin-or/solver_versions.txt \
-    && echo "   Version: 1.8.4" >> /opt/coin-or/solver_versions.txt \
-    && echo "" >> /opt/coin-or/solver_versions.txt \
-    && echo "5. Couenne (Global Optimization):" >> /opt/coin-or/solver_versions.txt \
-    && echo -n "   Version: " >> /opt/coin-or/solver_versions.txt \
-    && (couenne -v 2>&1 | grep -oE "Couenne [0-9]+\.[0-9]+\.[0-9]+" | head -1 >> /opt/coin-or/solver_versions.txt || echo "0.5.7" >> /opt/coin-or/solver_versions.txt) \
-    && echo "" >> /opt/coin-or/solver_versions.txt \
-    && echo "============================================" >> /opt/coin-or/solver_versions.txt \
-    && echo "Installation Directory: /opt/coin-or" >> /opt/coin-or/solver_versions.txt \
-    && echo "Binaries: /opt/coin-or/bin/" >> /opt/coin-or/solver_versions.txt \
-    && echo "Libraries: /opt/coin-or/lib/" >> /opt/coin-or/solver_versions.txt \
-    && echo "============================================" >> /opt/coin-or/solver_versions.txt \
-    && cat /opt/coin-or/solver_versions.txt
-
-# The image is now ready with all COIN-OR solvers installed \
+CMD ["/bin/bash", "-c", "echo 'COIN-OR Optimization Suite Ready' && tail -f /dev/null"]

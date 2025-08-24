@@ -1,0 +1,46 @@
+name: Build and Test COIN-OR Solvers
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+# Cancel any in-progress runs when a new run starts
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    # Building COIN-OR solvers takes approximately 15-30 minutes; we set 45 minutes
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: coinor-suite:test
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Use plain output for easier debugging in CI logs
+          progress: plain
+
+      - name: Verify image exists
+        run: |
+          echo "=== Docker Image Info ==="
+          docker images coinor-suite:test
+          size=$(docker inspect coinor-suite:test --format='{{.Size}}')
+          echo "Image size: $(echo $size | numfmt --to=si)"
