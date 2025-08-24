@@ -1,11 +1,15 @@
 ## COIN-OR Optimization Solvers Docker Suite
 
-A comprehensive Docker image containing the complete COIN-OR (Computational Infrastructure for Operations Research) optimization solver suite, built from source for maximum compatibility and performance.
+![Build and Test](https://github.com/mguley/coinor-solvers-suite/workflows/Build%20and%20Test%20COIN-OR%20Solvers/badge.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
+A comprehensive Docker image containing the complete COIN-OR (Computational Infrastructure for Operations Research) optimization solver suite, built from source with automated testing and validation.
 
 #### Overview
 
-This project provides a Docker image with five major COIN-OR optimization solvers, all compiled from source on Ubuntu 18.04 LTS with careful attention to dependencies and compatibility.
-The image serves as a complete optimization toolkit for researchers, engineers, and data scientists working on various optimization problems.
+This project provides a Docker image with five major COIN-OR optimization solvers, all compiled from source on Ubuntu 18.04 LTS.
+The image includes automated validation testing through GitHub Actions, ensuring reliability and compatibility.
+It serves as a complete optimization toolkit for researchers, engineers, and data scientists working on various optimization problems.
 
 #### Included Solvers
 
@@ -48,47 +52,128 @@ This is required because the automatic download from the original source can be 
 
 An additional resource from which we can try to download it: https://coin-or-tools.github.io/ThirdParty-Mumps
 
-#### Building the Image
+#### Using Docker Compose
 
-Clone this repository and build the Docker image:
+The simplest way to get started is using Docker Compose:
 
 ```bash
+# Clone the repository
 git clone https://github.com/mguley/coinor-solvers-suite.git
 cd coinor-solvers-suite
 
-# Ensure you have the MUMPS archive in the dist/ directory
-mkdir -p dist
-# Place MUMPS_4.10.0.tar.gz in the dist/ directory
+# Build and start the container
+docker-compose up --build -d
 
-# Build the Docker image
-docker compose up --build
+# Access the container
+docker exec -it coinor_solvers bash
+
+# Run the validation suite to verify everything works
+python /app/tests/validate_solvers.py
+```
+
+#### Using Docker directly
+
+If you prefer to use Docker directly:
+
+```bash
+# Build the image
+docker build -t coinor-suite:latest .
+
+# Run the container
+docker run -it --name coinor_solvers coinor-suite:latest bash
+
+# Inside the container, test a solver
+python -c "
+import pyomo.environ as pyo
+from pyomo.opt import SolverFactory
+
+# Create a simple model
+model = pyo.ConcreteModel()
+model.x = pyo.Var(bounds=(0, 10))
+model.obj = pyo.Objective(expr=model.x**2, sense=pyo.minimize)
+model.con = pyo.Constraint(expr=model.x >= 2)
+
+# Solve with Ipopt
+solver = SolverFactory('ipopt', executable='/opt/coin-or/bin/ipopt')
+result = solver.solve(model)
+print(f'Solution: x = {pyo.value(model.x):.4f}')
+"
+```
+
+#### Testing and validation
+
+This project includes automated testing to ensure all solvers function correctly.
+
+#### Running the validation suite
+
+The project includes a Python validation script that tests each solver with appropriate optimization problems:
+
+```bash
+# Run all tests
+docker exec coinor_solvers python /app/tests/validate_solvers.py
+
+# Test a specific solver
+docker exec coinor_solvers python /app/tests/validate_solvers.py --solver cbc
+```
+
+#### Python/Pyomo integration
+
+The image comes pre-configured with Python 3.8 and Pyomo, making it easy to formulate and solve optimization problems:
+
+```bash
+# Inside the container
+python -c "
+import pyomo.environ as pyo
+from pyomo.opt import SolverFactory
+
+# Example: Portfolio Optimization with CBC
+def solve_portfolio_optimization():
+    model = pyo.ConcreteModel()
+    
+    # Define assets
+    assets = ['Stock_A', 'Stock_B', 'Stock_C']
+    returns = {'Stock_A': 0.10, 'Stock_B': 0.15, 'Stock_C': 0.12}
+    risk = {'Stock_A': 0.05, 'Stock_B': 0.10, 'Stock_C': 0.07}
+    
+    # Decision variables: fraction to invest in each asset
+    model.x = pyo.Var(assets, bounds=(0, 1))
+    
+    # Objective: Maximize return
+    model.obj = pyo.Objective(
+        expr=sum(returns[i] * model.x[i] for i in assets),
+        sense=pyo.maximize
+    )
+    
+    # Constraints
+    model.budget = pyo.Constraint(expr=sum(model.x[i] for i in assets) == 1)
+    model.risk_limit = pyo.Constraint(
+        expr=sum(risk[i] * model.x[i] for i in assets) <= 0.08
+    )
+    
+    # Solve with CBC
+    solver = SolverFactory('cbc', executable='/opt/coin-or/bin/cbc')
+    result = solver.solve(model, tee=True)
+    
+    return model
+    
+solve_portfolio_optimization()
+"
 ```
 
 The build process will take approximately 15-30 minutes depending on your system, as it compiles all solvers from source.
-
-Once built, you can access the solvers:
-
-```bash
-docker exec -ti coinor_solvers bash
-
-# Run a specific solver within the container
-clp -help
-ipopt -v
-cbc -help
-bonmin -help
-couenne -v
-```
 
 #### Approach
 
 The Docker image uses a multi-stage build process to optimize build time and final image size:
 
-1. **Base Stage**: Sets up Ubuntu 18.04 with Python 3.8 and all necessary build dependencies
-2. **Stage 1**: Builds CLP with MUMPS support for enhanced numerical stability
-3. **Stage 2**: Builds Ipopt, leveraging the existing CLP installation
-4. **Stage 3**: Builds CBC, which depends on CLP for LP relaxations
-5. **Stage 4**: Builds Bonmin, integrating CBC and Ipopt capabilities
-6. **Stage 5**: Builds Couenne for global optimization, building on all previous solvers
+1. Base stage: base dependencies (Ubuntu 18.04 + build tools)
+2. Stage 1: CLP with MUMPS support
+3. Stage 2: Ipopt (leveraging CLP)
+4. Stage 3: CBC (using CLP for LP relaxations)
+5. Stage 4: Bonmin (integrating CBC + Ipopt)
+6. Stage 5: builds Couenne for global optimization (based on all previous solvers)
+7. Python environment setup
+8. Minimal runtime image
 
 Each stage carefully manages dependencies to ensure compatibility and optimal performance. 
 The use of Ubuntu 18.04 LTS provides a stable, well-tested foundation that's compatible with a wide range of systems.
