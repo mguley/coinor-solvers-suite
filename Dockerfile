@@ -314,7 +314,7 @@ ENV PATH="/opt/venv/bin:/opt/coin-or/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     COIN_OR_HOME="/opt/coin-or" \
     PYOMO_CONFIG_PATH="/opt/coin-or/bin" \
-    LD_LIBRARY_PATH="/opt/coin-or/lib:${LD_LIBRARY_PATH}" \
+    LD_LIBRARY_PATH="/opt/coin-or/lib" \
     VIRTUAL_ENV="/opt/venv"
 
 # Create non-root user

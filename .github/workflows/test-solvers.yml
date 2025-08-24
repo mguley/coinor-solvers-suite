@@ -35,12 +35,72 @@ jobs:
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # Use plain output for easier debugging in CI logs
-          progress: plain
 
       - name: Verify image exists
         run: |
           echo "=== Docker Image Info ==="
           docker images coinor-suite:test
+          
+          # Get and display image size
           size=$(docker inspect coinor-suite:test --format='{{.Size}}')
           echo "Image size: $(echo $size | numfmt --to=si)"
+          
+          # Display image details
+          echo ""
+          echo "=== Image Details ==="
+          docker inspect coinor-suite:test --format='Created: {{.Created}}'
+          docker inspect coinor-suite:test --format='Architecture: {{.Architecture}}'
+          docker inspect coinor-suite:test --format='OS: {{.Os}}'
+
+      - name: Start test container
+        run: |
+          echo "=== Starting test container with mounted test files ==="
+          docker run -d \
+            --name test-container \
+            -v ${{ github.workspace }}/tests:/app/tests:ro \
+            coinor-suite:test
+
+          # Wait for container to be ready
+          sleep 3
+
+          # Verify container is running
+          if docker ps | grep -q test-container; then
+            echo "✓ Container is running"
+          else
+            echo "✗ Container failed to start"
+            docker logs test-container
+            exit 1
+          fi
+
+      - name: Verify Python environment
+        run: |
+          echo "=== Python Environment Check ==="
+          docker exec test-container python --version
+
+      - name: Verify solver binaries
+        run: |
+          echo "=== Checking Solver Binaries ==="
+          for solver in clp cbc ipopt bonmin couenne; do
+            printf "%-10s: " "$solver"
+            if docker exec test-container test -x /opt/coin-or/bin/$solver; then
+              # Get file size for additional verification
+              size=$(docker exec test-container stat -c%s /opt/coin-or/bin/$solver)
+              echo "✓ Found and executable ($(echo $size | numfmt --to=iec-i --suffix=B))"
+            else
+              echo "✗ Missing or not executable"
+              exit 1
+            fi
+          done
+
+      - name: Run full validation suite
+        run: |
+          echo "=== Running Complete Validation Suite ==="
+          docker exec test-container python /app/tests/validate_solvers.py
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "=== Cleaning up ==="
+          docker stop test-container 2>/dev/null || true
+          docker rm test-container 2>/dev/null || true
+          echo "✓ Cleanup complete"
