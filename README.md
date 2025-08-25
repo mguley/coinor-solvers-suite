@@ -62,7 +62,7 @@ git clone https://github.com/mguley/coinor-solvers-suite.git
 cd coinor-solvers-suite
 
 # Build and start the container
-docker-compose up --build -d
+docker compose up --build -d
 
 # Access the container
 docker exec -it coinor_solvers bash
